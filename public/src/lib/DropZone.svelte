@@ -1,0 +1,142 @@
+<!-- The frontend of YSMParser.
+  - Copyright (C) 2026 MiRinChan
+  - This program is free software; you can redistribute it and/or modify
+  - it under the terms of the GNU General Public License as published by
+  - the Free Software Foundation; either version 2 of the License, or
+  - (at your option) any later version.
+  -
+  - This program is distributed in the hope that it will be useful,
+  - but WITHOUT ANY WARRANTY; without even the implied warranty of
+  - MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.See the
+  - GNU General Public License for more details.
+  -
+  - You should have received a copy of the GNU General Public License along
+  - with this program; if not, see < https://www.gnu.org/licenses/>.
+  -->
+
+<script lang="ts">
+  interface Props {
+    onFiles: (files: File[]) => void;
+    disabled?: boolean;
+  }
+  let { onFiles, disabled = false }: Props = $props();
+
+  let active = $state(false);
+
+  function normalizeFiles(list: FileList | File[]): File[] {
+    return Array.from(list)
+      .filter((f) => f.name.toLowerCase().endsWith(".ysm"))
+      .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  }
+
+  function onDragEnter(e: DragEvent) {
+    e.preventDefault();
+    if (!disabled) active = true;
+  }
+  function onDragOver(e: DragEvent) {
+    e.preventDefault();
+    if (!disabled) active = true;
+  }
+  function onDragLeave(e: DragEvent) {
+    e.preventDefault();
+    active = false;
+  }
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    active = false;
+    if (disabled || !e.dataTransfer) return;
+    onFiles(normalizeFiles(e.dataTransfer.files));
+  }
+
+  function onInput(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    if (input.files) {
+      onFiles(normalizeFiles(input.files));
+      input.value = "";
+    }
+  }
+</script>
+
+<label
+  class="dropzone"
+  class:active
+  class:disabled
+  ondragenter={onDragEnter}
+  ondragover={onDragOver}
+  ondragleave={onDragLeave}
+  ondrop={onDrop}
+  role="button"
+  tabindex="0"
+  onkeydown={(e) => e.key === "Enter" && !disabled && (e.currentTarget as HTMLElement).querySelector("input")?.click()}
+>
+  <input
+    type="file"
+    accept=".ysm"
+    multiple
+    hidden
+    {disabled}
+    oninput={onInput}
+  />
+  <div class="dropzone-inner">
+    <svg class="dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+      <path stroke-linecap="round" stroke-linejoin="round"
+        d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+    </svg>
+    <p class="dropzone-primary">Drop <code>.ysm</code> files here</p>
+    <p class="dropzone-secondary">or click to browse</p>
+  </div>
+</label>
+
+<style>
+  .dropzone {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 2.5rem 2rem;
+    cursor: pointer;
+    transition: border-color 0.15s, background 0.15s;
+    text-align: center;
+  }
+  .dropzone:hover:not(.disabled),
+  .dropzone.active {
+    border-color: var(--accent);
+    background: var(--accent-dim);
+  }
+  .dropzone.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .dropzone-inner {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.4rem;
+    pointer-events: none;
+  }
+  .dropzone-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    color: var(--accent);
+    margin-bottom: 0.4rem;
+  }
+  .dropzone-primary {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+  }
+  .dropzone-secondary {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0;
+  }
+  code {
+    background: var(--surface-2);
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-family: var(--font-mono);
+    font-size: 0.85em;
+  }
+</style>

@@ -64,6 +64,7 @@
               ninja
               emscripten
               nodejs_22
+              pnpm
               git
             ];
 

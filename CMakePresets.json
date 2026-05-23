@@ -38,6 +38,7 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
                 "CMAKE_TOOLCHAIN_FILE": "$env{EMSDK}/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake",
+                "CMAKE_CXX_SCAN_FOR_MODULES": "OFF",
                 "YSM_TARGET_WASM": "ON"
             }
         },

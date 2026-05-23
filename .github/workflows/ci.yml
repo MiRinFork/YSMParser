@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  flake:
+    name: Nix flake
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Evaluate flake
+        run: nix flake check --no-build
+
+  native:
+    name: Native C++
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Configure and build
+        run: |
+          nix develop .#native --command bash -c '
+            set -euo pipefail
+            cmake --preset linux-release
+            cmake --build --preset linux-release --parallel
+            cmake --install out/build/linux-release --prefix out/install/linux-release
+          '
+
+      - name: Upload native artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ysmparser-linux-native
+          path: out/install/linux-release/
+          if-no-files-found: error
+
+  web:
+    name: Browser WASM
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Build browser app
+        run: nix develop .#wasm --command bash public/scripts/build-web.sh
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ysmparser-web
+          path: public/dist/
+          if-no-files-found: error
+
+  tauri:
+    name: Tauri desktop
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: DeterminateSystems/determinate-nix-action@v3
+
+      - name: Build sidecar and Tauri shell
+        run: |
+          nix develop .#tauri --command bash -c '
+            set -euo pipefail
+            cmake -S . -B build-cpp -G Ninja -DCMAKE_BUILD_TYPE=Release -DYSM_TARGET_JNI=OFF
+            cmake --build build-cpp --parallel
+            mkdir -p public/src-tauri/binaries
+            cp build-cpp/YSMParser/YSMParser public/src-tauri/binaries/YSMParser-x86_64-unknown-linux-gnu
+            chmod +x public/src-tauri/binaries/YSMParser-x86_64-unknown-linux-gnu
+            cd public
+            pnpm install --frozen-lockfile
+            pnpm build
+            cargo build --manifest-path src-tauri/Cargo.toml --locked --release
+          '
+
+      - name: Upload Tauri artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: ysmparser-tauri-linux
+          path: public/src-tauri/target/release/ysm-parser
+          if-no-files-found: error
