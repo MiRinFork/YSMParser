@@ -16,7 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::ShellExt;
@@ -50,17 +50,47 @@ fn read_settings(path: &PathBuf) -> Result<Settings, String> {
     }
 }
 
+fn ensure_plain_file_name(name: &str) -> Result<(), String> {
+    let mut components = Path::new(name).components();
+    match (components.next(), components.next()) {
+        (Some(Component::Normal(_)), None) => Ok(()),
+        _ => Err(format!("Invalid input file name: {name}")),
+    }
+}
+
 // ── commands ───────────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn create_temp_input_dir() -> Result<String, String> {
+    let dir = tempfile::Builder::new()
+        .prefix("ysmparser-input-")
+        .tempdir()
+        .map_err(|e| e.to_string())?;
+    let path = dir.keep();
+    Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn write_temp_input_file(
+    input_dir: String,
+    name: String,
+    data: Vec<u8>,
+) -> Result<(), String> {
+    ensure_plain_file_name(&name)?;
+    let dest = PathBuf::from(input_dir).join(name);
+    fs::write(&dest, data).map_err(|e| e.to_string())
+}
 
 #[tauri::command]
 async fn write_temp_inputs(files: Vec<InputFile>) -> Result<String, String> {
     let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
     for f in &files {
+        ensure_plain_file_name(&f.name)?;
         let dest = dir.path().join(&f.name);
         fs::write(&dest, &f.data).map_err(|e| e.to_string())?;
     }
     // keep the dir alive by leaking it (temp dir lives for the process lifetime)
-    let path = dir.into_path();
+    let path = dir.keep();
     Ok(path.to_string_lossy().into_owned())
 }
 
@@ -140,6 +170,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            create_temp_input_dir,
+            write_temp_input_file,
             write_temp_inputs,
             run_parser,
             open_folder_dialog,

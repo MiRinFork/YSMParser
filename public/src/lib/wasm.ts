@@ -40,6 +40,20 @@ export interface OutputFile {
   data: Uint8Array;
 }
 
+export interface RunWasmOptions {
+  maxBatchBytes?: number;
+  onOutputFile?: (file: OutputFile) => void;
+  onProgress: (pct: number, label: string) => void;
+}
+
+export interface RunWasmResult {
+  outputCount: number;
+  outputBytes: number;
+  batchCount: number;
+}
+
+const DEFAULT_MAX_BATCH_BYTES = 96 * 1024 * 1024;
+
 export async function initWasm(
   onLog: (text: string) => void
 ): Promise<WasmModule> {
@@ -118,38 +132,100 @@ function ensureDir(FS: WasmModule["FS"], dir: string): void {
 export async function runWasm(
   mod: WasmModule,
   files: File[],
-  onProgress: (pct: number, label: string) => void
-): Promise<OutputFile[]> {
+  options: RunWasmOptions
+): Promise<RunWasmResult> {
   const { FS } = mod;
+  const batches = makeFileBatches(
+    files,
+    options.maxBatchBytes ?? DEFAULT_MAX_BATCH_BYTES
+  );
+  let outputCount = 0;
+  let outputBytes = 0;
 
-  wipeDir(FS, "/input");
-  wipeDir(FS, "/output");
-  ensureDir(FS, "/input");
-  ensureDir(FS, "/output");
+  if (batches.length === 0) {
+    return { outputCount: 0, outputBytes: 0, batchCount: 0 };
+  }
 
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i];
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    FS.writeFile(`/input/${file.name}`, bytes);
-    onProgress(
-      (i / Math.max(1, files.length)) * 20,
-      `Preparing ${i + 1} / ${files.length}`
+  for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+    const batch = batches[batchIndex];
+    const batchNumber = batchIndex + 1;
+    const batchBase = (batchIndex / batches.length) * 75;
+    const batchSpan = 75 / batches.length;
+
+    wipeDir(FS, "/input");
+    wipeDir(FS, "/output");
+    ensureDir(FS, "/input");
+    ensureDir(FS, "/output");
+
+    for (let i = 0; i < batch.length; i++) {
+      const file = batch[i];
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      FS.writeFile(`/input/${file.name}`, bytes);
+      options.onProgress(
+        batchBase + (i / Math.max(1, batch.length)) * batchSpan * 0.35,
+        `Loading batch ${batchNumber} / ${batches.length}`
+      );
+    }
+
+    options.onProgress(
+      batchBase + batchSpan * 0.35,
+      `Parsing batch ${batchNumber} / ${batches.length}`
+    );
+    const exitCode = mod.callMain(["-i", "/input", "-o", "/output"]);
+    if (typeof exitCode === "number" && exitCode !== 0) {
+      throw new Error(`Parser exited with code ${exitCode}`);
+    }
+
+    options.onProgress(
+      batchBase + batchSpan * 0.9,
+      `Collecting batch ${batchNumber} / ${batches.length}`
+    );
+    const batchOutput = collectOutputFiles(FS, "/output", options.onOutputFile);
+    outputCount += batchOutput.count;
+    outputBytes += batchOutput.bytes;
+
+    wipeDir(FS, "/input");
+    wipeDir(FS, "/output");
+    options.onProgress(
+      batchBase + batchSpan,
+      `Finished batch ${batchNumber} / ${batches.length}`
     );
   }
 
-  const exitCode = mod.callMain(["-i", "/input", "-o", "/output"]);
-  if (typeof exitCode === "number" && exitCode !== 0) {
-    throw new Error(`Parser exited with code ${exitCode}`);
+  return { outputCount, outputBytes, batchCount: batches.length };
+}
+
+function makeFileBatches(files: File[], maxBatchBytes: number): File[][] {
+  const safeMax = Math.max(1, maxBatchBytes);
+  const batches: File[][] = [];
+  let batch: File[] = [];
+  let batchBytes = 0;
+
+  for (const file of files) {
+    if (batch.length > 0 && batchBytes + file.size > safeMax) {
+      batches.push(batch);
+      batch = [];
+      batchBytes = 0;
+    }
+
+    batch.push(file);
+    batchBytes += file.size;
   }
 
-  return collectOutputFiles(FS, "/output");
+  if (batch.length > 0) {
+    batches.push(batch);
+  }
+
+  return batches;
 }
 
 function collectOutputFiles(
   FS: WasmModule["FS"],
-  root: string
-): OutputFile[] {
-  const result: OutputFile[] = [];
+  root: string,
+  onOutputFile?: (file: OutputFile) => void
+): { count: number; bytes: number } {
+  let count = 0;
+  let bytes = 0;
   const walk = (dir: string, relativeBase: string) => {
     const entries = FS.readdir(dir).filter((n) => n !== "." && n !== "..");
     for (const entry of entries) {
@@ -159,10 +235,13 @@ function collectOutputFiles(
       if (FS.isDir(stat.mode)) {
         walk(fullPath, relPath);
       } else {
-        result.push({ path: relPath, data: FS.readFile(fullPath) });
+        const data = FS.readFile(fullPath);
+        count += 1;
+        bytes += data.byteLength;
+        onOutputFile?.({ path: relPath, data });
       }
     }
   };
   walk(root, "");
-  return result;
+  return { count, bytes };
 }

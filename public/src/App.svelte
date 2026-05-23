@@ -25,12 +25,15 @@
   import {
     isTauri,
     runParserNative,
+    createTempInputDir,
     getSavedOutputDir,
     openPathInFileBrowser,
-    writeTempInputFiles,
+    writeTempInputFile,
   } from "./lib/tauri.js";
-  import { type WasmModule, type OutputFile, initWasm, runWasm } from "./lib/wasm.js";
+  import { type WasmModule, initWasm, runWasm } from "./lib/wasm.js";
   import JSZip from "jszip";
+
+  const WASM_BATCH_BYTES = 96 * 1024 * 1024;
 
   // ── state ──────────────────────────────────────────────────────────────────
   let files = $state<File[]>([]);
@@ -38,7 +41,8 @@
   let progress = $state(0);
   let progressLabel = $state("Idle");
   let running = $state(false);
-  let outputFiles = $state<OutputFile[]>([]);
+  let outputFileCount = $state(0);
+  let outputBytes = $state(0);
   let outputZip = $state<Blob | null>(null);
   let outputDir = $state<string>("");
   let showSettings = $state(false);
@@ -90,7 +94,8 @@
     const deduped = newFiles.filter((f) => !names.has(f.name));
     files = [...files, ...deduped];
     outputZip = null;
-    outputFiles = [];
+    outputFileCount = 0;
+    outputBytes = 0;
   }
 
   function removeFile(i: number) {
@@ -102,7 +107,8 @@
     if (!canRun) return;
     running = true;
     logs = [];
-    outputFiles = [];
+    outputFileCount = 0;
+    outputBytes = 0;
     outputZip = null;
     setProgress(2, "Starting…");
 
@@ -124,10 +130,16 @@
     log("Writing input files to temp directory…");
     setProgress(10, "Preparing files");
 
-    const inputData = await Promise.all(
-      files.map(async (f) => ({ name: f.name, data: new Uint8Array(await f.arrayBuffer()) }))
-    );
-    const inputDir = await writeTempInputFiles(inputData);
+    const inputDir = await createTempInputDir();
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const data = new Uint8Array(await file.arrayBuffer());
+      await writeTempInputFile(inputDir, file.name, data);
+      setProgress(
+        10 + ((i + 1) / Math.max(1, files.length)) * 15,
+        `Preparing ${i + 1} / ${files.length}`
+      );
+    }
     setProgress(25, "Running parser");
     log(`Input temp dir: ${inputDir}`);
     log(`Output dir: ${outputDir}`);
@@ -143,25 +155,46 @@
 
   async function runWasmMode() {
     if (!wasmMod) throw new Error("WASM runtime not ready");
-    log("Preparing files…");
-
-    const out = await runWasm(wasmMod, files, (pct, label) =>
-      setProgress(pct, label)
+    const estimatedBatches = Math.max(
+      1,
+      Math.ceil(totalSize / WASM_BATCH_BYTES)
     );
-    setProgress(76, "Packaging");
-    log(`Parser finished. ${out.length} output file(s).`);
-    outputFiles = out;
+    log(
+      `Preparing ${files.length} file(s) in ${estimatedBatches} batch(es), up to ${formatSize(WASM_BATCH_BYTES)} per batch.`
+    );
 
     const zip = new JSZip();
-    for (const f of out) zip.file(f.path, f.data);
-    outputZip = await zip.generateAsync({
-      type: "blob",
-      compression: "DEFLATE",
-      compressionOptions: { level: 6 },
+    const result = await runWasm(wasmMod, files, {
+      maxBatchBytes: WASM_BATCH_BYTES,
+      onProgress: (pct, label) => setProgress(pct, label),
+      onOutputFile: (file) => zip.file(file.path, file.data),
     });
+    setProgress(76, "Packaging");
+    log(
+      `Parser finished. ${result.outputCount} output file(s) from ${result.batchCount} batch(es).`
+    );
 
-    setProgress(100, `${out.length} file(s) ready`);
-    log(`ZIP ready — ${out.length} file(s).`);
+    outputZip = await zip.generateAsync(
+      {
+        type: "blob",
+        compression: "DEFLATE",
+        compressionOptions: { level: 6 },
+        streamFiles: true,
+      },
+      (metadata) => {
+        setProgress(
+          76 + metadata.percent * 0.24,
+          `Packaging ${metadata.percent.toFixed(0)}%`
+        );
+      }
+    );
+
+    outputFileCount = result.outputCount;
+    outputBytes = result.outputBytes;
+    setProgress(100, `${result.outputCount} file(s) ready`);
+    log(
+      `ZIP ready — ${result.outputCount} file(s), ${formatSize(result.outputBytes)} unpacked.`
+    );
   }
 
   // ── download ───────────────────────────────────────────────────────────────
@@ -184,7 +217,8 @@
   function clear() {
     files = [];
     logs = [];
-    outputFiles = [];
+    outputFileCount = 0;
+    outputBytes = 0;
     outputZip = null;
     setProgress(0, "Idle");
   }
@@ -288,8 +322,8 @@
     <section class="panel panel-log">
       <div class="panel-head">
         <h2 class="panel-title">Output</h2>
-        {#if outputFiles.length > 0}
-          <span class="panel-meta">{outputFiles.length} file(s)</span>
+        {#if outputFileCount > 0}
+          <span class="panel-meta">{outputFileCount} file(s) · {formatSize(outputBytes)}</span>
         {/if}
       </div>
 

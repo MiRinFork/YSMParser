@@ -61,6 +61,22 @@ export async function openPathInFileBrowser(path: string): Promise<void> {
   return invoke("open_in_file_browser", { path });
 }
 
+export async function createTempInputDir(): Promise<string> {
+  return invoke<string>("create_temp_input_dir");
+}
+
+export async function writeTempInputFile(
+  inputDir: string,
+  name: string,
+  data: Uint8Array
+): Promise<void> {
+  return invoke("write_temp_input_file", {
+    inputDir,
+    name,
+    data: Array.from(data),
+  });
+}
+
 export async function writeTempInputFiles(
   files: { name: string; data: Uint8Array }[]
 ): Promise<string> {
