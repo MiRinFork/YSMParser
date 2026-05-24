@@ -53,10 +53,9 @@ export interface RunWasmResult {
 }
 
 const DEFAULT_MAX_BATCH_BYTES = 96 * 1024 * 1024;
+let runtimeScriptPromise: Promise<void> | null = null;
 
-export async function initWasm(
-  onLog: (text: string) => void
-): Promise<WasmModule> {
+function wasmFactory(): ((opts: unknown) => Promise<WasmModule>) | undefined {
   const factory =
     window.YSMParserModule ??
     window.Module ??
@@ -64,8 +63,16 @@ export async function initWasm(
     globalThis.YSMParserModule ??
     // @ts-ignore
     globalThis.Module;
+  return typeof factory === "function" ? factory : undefined;
+}
 
-  if (typeof factory !== "function") {
+export async function initWasm(
+  onLog: (text: string) => void
+): Promise<WasmModule> {
+  await loadWasmRuntimeScript();
+  const factory = wasmFactory();
+
+  if (!factory) {
     const msg = await diagnoseFactoryError();
     throw new Error(msg);
   }
@@ -76,6 +83,34 @@ export async function initWasm(
     printErr: (text: string) => onLog(text),
     locateFile: (path: string) => `./${path}`,
   });
+}
+
+function loadWasmRuntimeScript(): Promise<void> {
+  if (wasmFactory()) return Promise.resolve();
+  if (runtimeScriptPromise) return runtimeScriptPromise;
+
+  runtimeScriptPromise = new Promise((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[data-ysmparser-runtime="true"]'
+    );
+    if (existing) {
+      existing.addEventListener("load", () => resolve(), { once: true });
+      existing.addEventListener("error", () => reject(new Error("Failed to load YSMParser.js")), {
+        once: true,
+      });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "./YSMParser.js";
+    script.async = true;
+    script.dataset.ysmparserRuntime = "true";
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Failed to load YSMParser.js"));
+    document.head.appendChild(script);
+  });
+
+  return runtimeScriptPromise;
 }
 
 async function diagnoseFactoryError(): Promise<string> {

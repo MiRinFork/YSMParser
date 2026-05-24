@@ -16,7 +16,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::ShellExt;
@@ -50,6 +50,24 @@ fn read_settings(path: &PathBuf) -> Result<Settings, String> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Settings::default()),
         Err(e) => Err(e.to_string()),
     }
+}
+
+#[cfg(unix)]
+fn symlink_file(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(src, dest)
+}
+
+#[cfg(windows)]
+fn symlink_file(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(src, dest)
+}
+
+#[cfg(not(any(unix, windows)))]
+fn symlink_file(_src: &Path, _dest: &Path) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "file symlinks are not supported on this platform",
+    ))
 }
 
 // ── commands ───────────────────────────────────────────────────────────────
@@ -88,27 +106,14 @@ async fn prepare_input_dir_from_paths(paths: Vec<String>) -> Result<String, Stri
             .ok_or_else(|| format!("Invalid path: {src_str}"))?;
         let dest = dir.path().join(name);
         if fs::hard_link(&src, &dest).is_err() {
-            fs::copy(&src, &dest)
-                .map_err(|e| format!("copy {} -> {}: {e}", src.display(), dest.display()))?;
+            if symlink_file(&src, &dest).is_err() {
+                fs::copy(&src, &dest)
+                    .map_err(|e| format!("copy {} -> {}: {e}", src.display(), dest.display()))?;
+            }
         }
     }
     let path = dir.keep();
     Ok(path.to_string_lossy().into_owned())
-}
-
-#[tauri::command]
-async fn open_input_files_dialog(app: tauri::AppHandle) -> Result<Vec<String>, String> {
-    let picked = app
-        .dialog()
-        .file()
-        .add_filter("YSM Files", &["ysm"])
-        .blocking_pick_files();
-    Ok(picked
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|p| p.into_path().ok())
-        .map(|p| p.to_string_lossy().into_owned())
-        .collect())
 }
 
 #[tauri::command]
@@ -184,7 +189,6 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             stat_input_files,
             prepare_input_dir_from_paths,
-            open_input_files_dialog,
             run_parser,
             open_folder_dialog,
             get_output_dir,

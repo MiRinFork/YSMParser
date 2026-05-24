@@ -20,6 +20,7 @@
     isTauri,
     listenTauriDragDrop,
     openInputFilesDialog,
+    preloadInputFilesDialog,
   } from "./tauri.js";
 
   interface Props {
@@ -30,6 +31,8 @@
   let { onFiles, onPaths, disabled = false }: Props = $props();
 
   let active = $state(false);
+  let picking = $state(false);
+  let unavailable = $derived(disabled || picking);
 
   function isYsm(name: string): boolean {
     return name.toLowerCase().endsWith(".ysm");
@@ -54,8 +57,9 @@
   onMount(() => {
     if (!isTauri) return;
     let unlisten: (() => void) | null = null;
+    preloadInputFilesDialog();
     listenTauriDragDrop((phase, paths) => {
-      if (disabled) return;
+      if (unavailable) return;
       switch (phase) {
         case "enter":
         case "over":
@@ -76,14 +80,19 @@
   });
 
   async function pickViaTauri() {
-    if (disabled) return;
-    emitPaths(await openInputFilesDialog());
+    if (unavailable) return;
+    picking = true;
+    try {
+      emitPaths(await openInputFilesDialog());
+    } finally {
+      picking = false;
+    }
   }
 
   // ── Browser/WASM mode: HTML5 drop + file input ─────────────────────────
   function onDragOver(e: DragEvent) {
     e.preventDefault();
-    if (!disabled) active = true;
+    if (!unavailable) active = true;
   }
   function onDragLeave(e: DragEvent) {
     e.preventDefault();
@@ -92,7 +101,7 @@
   function onDrop(e: DragEvent) {
     e.preventDefault();
     active = false;
-    if (disabled || !e.dataTransfer) return;
+    if (unavailable || !e.dataTransfer) return;
     onFiles?.(sortedYsmFiles(Array.from(e.dataTransfer.files)));
   }
 
@@ -121,8 +130,10 @@
     type="button"
     class="dropzone"
     class:active
-    class:disabled
-    {disabled}
+    class:disabled={unavailable}
+    disabled={unavailable}
+    aria-busy={picking}
+    aria-label="Choose .ysm files"
     onclick={pickViaTauri}
   >
     {@render inner()}
@@ -131,7 +142,7 @@
   <label
     class="dropzone"
     class:active
-    class:disabled
+    class:disabled={unavailable}
     ondragover={onDragOver}
     ondragleave={onDragLeave}
     ondrop={onDrop}
@@ -142,7 +153,7 @@
       multiple
       class="dropzone-input"
       aria-label="Choose .ysm files"
-      {disabled}
+      disabled={unavailable}
       oninput={onInput}
     />
     {@render inner()}
@@ -157,8 +168,8 @@
     justify-content: center;
     width: 100%;
     border: 2px dashed var(--border);
-    border-radius: 12px;
-    padding: 2.5rem 2rem;
+    border-radius: 8px;
+    padding: 1.35rem 1rem;
     cursor: pointer;
     transition: border-color 0.15s, background 0.15s;
     text-align: center;
@@ -192,14 +203,14 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    gap: 0.4rem;
+    gap: 0.28rem;
     pointer-events: none;
   }
   .dropzone-icon {
-    width: 2.5rem;
-    height: 2.5rem;
+    width: 2rem;
+    height: 2rem;
     color: var(--accent);
-    margin-bottom: 0.4rem;
+    margin-bottom: 0.15rem;
   }
   .dropzone-primary {
     font-size: 0.95rem;
@@ -218,5 +229,25 @@
     padding: 1px 5px;
     font-family: var(--font-mono);
     font-size: 0.85em;
+  }
+
+  @media (max-width: 768px) {
+    .dropzone {
+      padding: 0.8rem 0.85rem;
+    }
+    .dropzone-inner {
+      gap: 0.18rem;
+    }
+    .dropzone-icon {
+      width: 1.45rem;
+      height: 1.45rem;
+      margin-bottom: 0;
+    }
+    .dropzone-primary {
+      font-size: 0.86rem;
+    }
+    .dropzone-secondary {
+      font-size: 0.74rem;
+    }
   }
 </style>

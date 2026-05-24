@@ -60,7 +60,7 @@
   // ── derived ────────────────────────────────────────────────────────────────
   let totalSize = $derived(items.reduce((s, it) => s + it.size, 0));
   let canRun = $derived(
-    items.length > 0 && !running && (isTauri ? !!outputDir : wasmReady)
+    items.length > 0 && !running && (isTauri || wasmReady)
   );
 
   // ── helpers ────────────────────────────────────────────────────────────────
@@ -125,6 +125,10 @@
   // ── run parser ─────────────────────────────────────────────────────────────
   async function run() {
     if (!canRun) return;
+    if (isTauri && !outputDir) {
+      showSettings = true;
+      return;
+    }
     running = true;
     logs = [];
     outputFileCount = 0;
@@ -362,7 +366,9 @@
   .shell {
     display: flex;
     flex-direction: column;
-    min-height: 100dvh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
   }
 
   /* ── Header ── */
@@ -371,7 +377,7 @@
     align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
-    padding: 0.75rem 1.5rem;
+    padding: 0.55rem 1rem;
     border-bottom: 1px solid var(--border);
     background: var(--surface-1);
     flex-shrink: 0;
@@ -402,7 +408,7 @@
     font-size: 0.72rem;
     font-family: var(--font-mono);
     padding: 0.2rem 0.6rem;
-    border-radius: 999px;
+    border-radius: 6px;
     background: var(--surface-3);
     color: var(--text-muted);
     border: 1px solid var(--border);
@@ -419,7 +425,7 @@
     font-size: 0.72rem;
     font-family: var(--font-mono);
     padding: 0.2rem 0.6rem;
-    border-radius: 999px;
+    border-radius: 6px;
     background: var(--surface-3);
     color: var(--text-secondary);
     border: 1px solid var(--border);
@@ -431,7 +437,7 @@
   .icon-btn {
     background: none;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: 6px;
     padding: 0.35rem 0.45rem;
     color: var(--text-muted);
     cursor: pointer;
@@ -449,13 +455,15 @@
     flex: 1;
     display: grid;
     grid-template-columns: 1fr 1fr;
-    gap: 1.25rem;
-    padding: 1.25rem 1.5rem;
+    gap: 0.85rem;
+    padding: 0.85rem 1rem;
     min-height: 0;
+    overflow: hidden;
   }
   @media (max-width: 768px) {
     .main {
       grid-template-columns: 1fr;
+      grid-template-rows: minmax(0, 1.1fr) minmax(0, 0.9fr);
       padding: 1rem;
     }
   }
@@ -464,22 +472,24 @@
   .panel {
     display: flex;
     flex-direction: column;
-    gap: 0.85rem;
+    gap: 0.65rem;
     background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 1.1rem 1.25rem;
+    border-radius: 8px;
+    padding: 0.85rem 0.95rem;
     min-width: 0;
     min-height: 0;
+    overflow: hidden;
   }
   .panel-head {
     display: flex;
-    align-items: baseline;
+    align-items: center;
     justify-content: space-between;
     gap: 0.5rem;
+    min-width: 0;
   }
   .panel-title {
-    font-size: 0.85rem;
+    font-size: 0.78rem;
     font-weight: 600;
     color: var(--text-secondary);
     text-transform: uppercase;
@@ -489,12 +499,15 @@
     font-size: 0.75rem;
     color: var(--text-muted);
     font-family: var(--font-mono);
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .queue-wrap {
     flex: 1;
-    overflow-y: auto;
     min-height: 0;
-    max-height: 22rem;
+    overflow: hidden;
   }
 
   /* ── Actions ── */
@@ -505,8 +518,8 @@
     padding-top: 0.1rem;
   }
   .btn {
-    padding: 0.5rem 1rem;
-    border-radius: 8px;
+    padding: 0.45rem 0.85rem;
+    border-radius: 6px;
     font-size: 0.83rem;
     font-weight: 500;
     cursor: pointer;

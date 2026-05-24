@@ -29,6 +29,7 @@ export const isTauri =
     "__TAURI_INTERNALS__" in tauriGlobal);
 
 let cachedInvoke: typeof import("@tauri-apps/api/core").invoke | null = null;
+let cachedDialogOpen: typeof import("@tauri-apps/plugin-dialog").open | null = null;
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   if (!cachedInvoke) {
@@ -36,6 +37,14 @@ async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T
     cachedInvoke = mod.invoke;
   }
   return cachedInvoke(cmd, args) as Promise<T>;
+}
+
+async function dialogOpen(): Promise<typeof import("@tauri-apps/plugin-dialog").open> {
+  if (!cachedDialogOpen) {
+    const mod = await import("@tauri-apps/plugin-dialog");
+    cachedDialogOpen = mod.open;
+  }
+  return cachedDialogOpen;
 }
 
 export interface FileStat {
@@ -75,8 +84,18 @@ export async function prepareInputDirFromPaths(paths: string[]): Promise<string>
   return invoke<string>("prepare_input_dir_from_paths", { paths });
 }
 
+export function preloadInputFilesDialog(): void {
+  if (isTauri) void dialogOpen();
+}
+
 export async function openInputFilesDialog(): Promise<string[]> {
-  return invoke<string[]>("open_input_files_dialog");
+  const open = await dialogOpen();
+  const picked = await open({
+    multiple: true,
+    filters: [{ name: "YSM Files", extensions: ["ysm"] }],
+  });
+  if (!picked) return [];
+  return Array.isArray(picked) ? picked : [picked];
 }
 
 export type DragDropPhase = "enter" | "over" | "leave" | "drop";
