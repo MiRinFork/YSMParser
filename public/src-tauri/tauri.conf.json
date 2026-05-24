@@ -13,10 +13,10 @@
     "windows": [
       {
         "title": "YSMParser",
-        "width": 1100,
-        "height": 720,
-        "minWidth": 800,
-        "minHeight": 560,
+        "width": 900,
+        "height": 670,
+        "minWidth": 850,
+        "minHeight": 600,
         "resizable": true,
         "decorations": true
       }
@@ -37,6 +37,11 @@
     ],
     "externalBin": [
       "binaries/YSMParser"
-    ]
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "skip"
+      }
+    }
   }
 }
