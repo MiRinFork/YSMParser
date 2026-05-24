@@ -26,6 +26,49 @@ The desktop binary is written to:
 public/src-tauri/target/release/ysm-parser
 ```
 
+## Cross-Build Windows Tauri From Linux
+
+Tauri supports cross-building Windows NSIS installers from Linux/macOS with
+caveats. This project also needs a Windows parser sidecar, so the local release
+script cross-builds the C++ `YSMParser.exe` with MinGW before running Tauri
+with `cargo-xwin`.
+
+Run from the repository root:
+
+```bash
+scripts/release.sh tauri-windows-x64
+```
+
+The script enters `nix develop .#tauri-windows` automatically when `flake.nix`
+is available. The first run can download the Windows SDK through `cargo-xwin`;
+by default that cache is stored in:
+
+```text
+out/xwin-cache/
+```
+
+The generated archive is written under:
+
+```text
+out/release/
+```
+
+Cross-built Windows `.msi` installers are not supported by Tauri because WiX
+only runs on Windows. The cross-build target intentionally produces an NSIS
+setup `.exe`.
+
+## macOS Tauri Builds
+
+macOS `.app` and `.dmg` bundles must be produced on a macOS host. From a Mac,
+run:
+
+```bash
+scripts/release.sh tauri
+```
+
+For automated release artifacts, use the macOS GitHub Actions runner configured
+in `.github/workflows/ci.yml`.
+
 ## Browser-only Web Build
 
 The browser build does not use the native Tauri sidecar. It needs the web

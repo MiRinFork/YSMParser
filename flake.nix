@@ -102,6 +102,25 @@
               "export WEBKIT_DISABLE_DMABUF_RENDERER=1"
             ];
           };
+
+          tauri-windows = pkgs.mkShell {
+            packages = nativePackages ++ (with pkgs; [
+              rustup
+              cargo-xwin
+              lld
+              llvmPackages.llvm
+              nsis
+              nodejs_22
+              pnpm
+              pkg-config
+              pkgsCross.mingwW64.stdenv.cc
+            ]);
+
+            shellHook = nativeEnv + mkHook [
+              "export PATH=\"$HOME/.cargo/bin:$PATH\""
+              "export XWIN_CACHE_DIR=\"$PWD/out/xwin-cache\""
+            ];
+          };
         });
     };
 }
