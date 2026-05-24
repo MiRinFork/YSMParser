@@ -477,6 +477,12 @@ int main(int argc, char** argv) {
                  PlatformCompat::enable_virtual_terminal(stderr);
 
     CLI::App app{ "YSM File Decryptor" };
+    // On Windows, argv from main() is encoded in the system ANSI code page,
+    // so paths containing characters outside that code page (common with
+    // CJK usernames in the Tauri sidecar's temp dir) get mangled before
+    // std::filesystem ever sees them. ensure_utf8 re-reads the original
+    // UTF-16 command line via GetCommandLineW and re-encodes as UTF-8.
+    argv = app.ensure_utf8(argv);
     app.set_version_flag("--version", YSM_PARSER_VERSION, "Show version information and exit.");
 
     std::string input_dir_path;
