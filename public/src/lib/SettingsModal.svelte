@@ -27,9 +27,14 @@
   let draft = $state("");
   let picking = $state(false);
   let error = $state("");
+  let firstFocusEl: HTMLButtonElement | undefined = $state();
 
   $effect(() => {
     draft = outputDir;
+  });
+
+  $effect(() => {
+    firstFocusEl?.focus();
   });
 
   async function pickFolder() {
@@ -50,13 +55,33 @@
     onSave(draft);
     onClose();
   }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Escape") onClose();
+  }
+
+  function onOverlayClick(e: MouseEvent) {
+    if (e.target === e.currentTarget) onClose();
+  }
 </script>
 
-<div class="overlay" role="dialog" aria-modal="true" aria-label="Settings">
-  <div class="modal">
+<svelte:window onkeydown={onKey} />
+
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="overlay"
+  onclick={onOverlayClick}
+>
+  <div
+    class="modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="settings-title"
+  >
     <div class="modal-header">
-      <h2>Settings</h2>
-      <button class="close-btn" onclick={onClose} aria-label="Close">✕</button>
+      <h2 id="settings-title">Settings</h2>
+      <button class="close-btn" onclick={onClose} aria-label="Close" bind:this={firstFocusEl}>✕</button>
     </div>
 
     <div class="modal-body">
@@ -76,7 +101,7 @@
         </button>
       </div>
       {#if error}
-        <p class="field-error">{error}</p>
+        <p class="field-error" role="alert">{error}</p>
       {/if}
     </div>
 
@@ -91,19 +116,20 @@
   .overlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.6);
+    background: rgba(0, 0, 0, 0.7);
     display: flex;
     align-items: center;
     justify-content: center;
+    padding: 1rem;
     z-index: 100;
-    backdrop-filter: blur(4px);
   }
   .modal {
     background: var(--surface-1);
     border: 1px solid var(--border);
-    border-radius: 16px;
-    width: min(480px, 90vw);
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+    border-radius: 12px;
+    width: min(480px, 100%);
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
   }
   .modal-header {
     display: flex;

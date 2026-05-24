@@ -17,38 +17,43 @@
 <script lang="ts">
   import { formatSize } from "./format.js";
 
+  interface QueueItem {
+    name: string;
+    size: number;
+  }
+
   interface Props {
-    files: File[];
+    items: QueueItem[];
     onRemove?: (index: number) => void;
   }
-  let { files, onRemove }: Props = $props();
+  let { items, onRemove }: Props = $props();
 </script>
 
-<div class="file-queue">
-  {#if files.length === 0}
-    <div class="empty-state">
-      <span>No files selected</span>
-    </div>
-  {:else}
-    {#each files as file, i}
-      <div class="file-item">
-        <span class="file-index">{String(i + 1).padStart(2, "0")}</span>
+{#if items.length === 0}
+  <div class="empty-state">
+    <span>No files selected</span>
+  </div>
+{:else}
+  <ul class="file-queue" aria-label="Selected files">
+    {#each items as item, i (item.name)}
+      <li class="file-item">
+        <span class="file-index" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
         <div class="file-info">
-          <strong class="file-name">{file.name}</strong>
-          <span class="file-size">{formatSize(file.size)}</span>
+          <strong class="file-name">{item.name}</strong>
+          <span class="file-size">{formatSize(item.size)}</span>
         </div>
         {#if onRemove}
           <button
             class="remove-btn"
             onclick={() => onRemove(i)}
-            aria-label="Remove {file.name}"
+            aria-label="Remove {item.name}"
             title="Remove"
           >✕</button>
         {/if}
-      </div>
+      </li>
     {/each}
-  {/if}
-</div>
+  </ul>
+{/if}
 
 <style>
   .file-queue {
@@ -56,6 +61,9 @@
     flex-direction: column;
     gap: 0.35rem;
     min-height: 3rem;
+    list-style: none;
+    padding: 0;
+    margin: 0;
   }
   .empty-state {
     display: flex;

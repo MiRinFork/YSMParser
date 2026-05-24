@@ -24,7 +24,14 @@
 </script>
 
 <div class="progress-wrap">
-  <div class="progress-track">
+  <div
+    class="progress-track"
+    role="progressbar"
+    aria-valuenow={Math.round(clamped)}
+    aria-valuemin="0"
+    aria-valuemax="100"
+    aria-label={label ?? "Progress"}
+  >
     <div class="progress-fill" style="width: {clamped}%"></div>
   </div>
   {#if label}

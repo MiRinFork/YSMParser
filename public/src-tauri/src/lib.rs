@@ -16,19 +16,18 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Component, Path, PathBuf};
+use std::path::PathBuf;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_shell::ShellExt;
 
 const STORE_FILE: &str = "settings.json";
 
-// ── file transfer type ─────────────────────────────────────────────────────
-
-#[derive(Deserialize)]
-pub struct InputFile {
-    pub name: String,
-    pub data: Vec<u8>,
+#[derive(Serialize)]
+pub struct FileStat {
+    name: String,
+    path: String,
+    size: u64,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -36,9 +35,12 @@ struct Settings {
     output_dir: Option<String>,
 }
 
+fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    app.path().app_data_dir().map_err(|e| e.to_string())
+}
+
 fn settings_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    Ok(app_data.join(STORE_FILE))
+    Ok(app_data_dir(app)?.join(STORE_FILE))
 }
 
 fn read_settings(path: &PathBuf) -> Result<Settings, String> {
@@ -50,48 +52,63 @@ fn read_settings(path: &PathBuf) -> Result<Settings, String> {
     }
 }
 
-fn ensure_plain_file_name(name: &str) -> Result<(), String> {
-    let mut components = Path::new(name).components();
-    match (components.next(), components.next()) {
-        (Some(Component::Normal(_)), None) => Ok(()),
-        _ => Err(format!("Invalid input file name: {name}")),
-    }
-}
-
 // ── commands ───────────────────────────────────────────────────────────────
 
 #[tauri::command]
-async fn create_temp_input_dir() -> Result<String, String> {
+async fn stat_input_files(paths: Vec<String>) -> Result<Vec<FileStat>, String> {
+    paths
+        .into_iter()
+        .map(|p| {
+            let path = PathBuf::from(&p);
+            let meta = fs::metadata(&path).map_err(|e| format!("{p}: {e}"))?;
+            let name = path
+                .file_name()
+                .ok_or_else(|| format!("Invalid path: {p}"))?
+                .to_string_lossy()
+                .into_owned();
+            Ok(FileStat {
+                name,
+                path: p,
+                size: meta.len(),
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+async fn prepare_input_dir_from_paths(paths: Vec<String>) -> Result<String, String> {
     let dir = tempfile::Builder::new()
         .prefix("ysmparser-input-")
         .tempdir()
         .map_err(|e| e.to_string())?;
-    let path = dir.keep();
-    Ok(path.to_string_lossy().into_owned())
-}
-
-#[tauri::command]
-async fn write_temp_input_file(
-    input_dir: String,
-    name: String,
-    data: Vec<u8>,
-) -> Result<(), String> {
-    ensure_plain_file_name(&name)?;
-    let dest = PathBuf::from(input_dir).join(name);
-    fs::write(&dest, data).map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-async fn write_temp_inputs(files: Vec<InputFile>) -> Result<String, String> {
-    let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
-    for f in &files {
-        ensure_plain_file_name(&f.name)?;
-        let dest = dir.path().join(&f.name);
-        fs::write(&dest, &f.data).map_err(|e| e.to_string())?;
+    for src_str in &paths {
+        let src = PathBuf::from(src_str);
+        let name = src
+            .file_name()
+            .ok_or_else(|| format!("Invalid path: {src_str}"))?;
+        let dest = dir.path().join(name);
+        if fs::hard_link(&src, &dest).is_err() {
+            fs::copy(&src, &dest)
+                .map_err(|e| format!("copy {} -> {}: {e}", src.display(), dest.display()))?;
+        }
     }
-    // keep the dir alive by leaking it (temp dir lives for the process lifetime)
     let path = dir.keep();
     Ok(path.to_string_lossy().into_owned())
+}
+
+#[tauri::command]
+async fn open_input_files_dialog(app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let picked = app
+        .dialog()
+        .file()
+        .add_filter("YSM Files", &["ysm"])
+        .blocking_pick_files();
+    Ok(picked
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|p| p.into_path().ok())
+        .map(|p| p.to_string_lossy().into_owned())
+        .collect())
 }
 
 #[tauri::command]
@@ -115,16 +132,13 @@ async fn run_parser(
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
 
     if !output.status.success() {
-        let msg = if stderr.is_empty() { stdout } else { stderr };
-        return Err(msg);
+        return Err(if stderr.is_empty() { stdout } else { stderr });
     }
-
-    let combined = if stderr.is_empty() {
-        stdout
+    if stderr.is_empty() {
+        Ok(stdout)
     } else {
-        format!("{}\n{}", stdout, stderr)
-    };
-    Ok(combined)
+        Ok(format!("{stdout}\n{stderr}"))
+    }
 }
 
 #[tauri::command]
@@ -143,10 +157,8 @@ async fn get_output_dir(app: tauri::AppHandle) -> Result<Option<String>, String>
 
 #[tauri::command]
 async fn set_output_dir(app: tauri::AppHandle, dir: String) -> Result<(), String> {
-    let app_data = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    fs::create_dir_all(&app_data).map_err(|e| e.to_string())?;
-    let store_path = app_data.join(STORE_FILE);
-
+    fs::create_dir_all(app_data_dir(&app)?).map_err(|e| e.to_string())?;
+    let store_path = settings_path(&app)?;
     let mut settings = read_settings(&store_path)?;
     settings.output_dir = Some(dir);
     let raw = serde_json::to_string_pretty(&settings).map_err(|e| e.to_string())?;
@@ -170,9 +182,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            create_temp_input_dir,
-            write_temp_input_file,
-            write_temp_inputs,
+            stat_input_files,
+            prepare_input_dir_from_paths,
+            open_input_files_dialog,
             run_parser,
             open_folder_dialog,
             get_output_dir,

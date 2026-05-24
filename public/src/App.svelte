@@ -25,18 +25,25 @@
   import {
     isTauri,
     runParserNative,
-    createTempInputDir,
     getSavedOutputDir,
     openPathInFileBrowser,
-    writeTempInputFile,
+    statInputFiles,
+    prepareInputDirFromPaths,
   } from "./lib/tauri.js";
   import { type WasmModule, initWasm, runWasm } from "./lib/wasm.js";
   import JSZip from "jszip";
 
   const WASM_BATCH_BYTES = 96 * 1024 * 1024;
 
+  interface QueueItem {
+    name: string;
+    size: number;
+    file?: File;
+    path?: string;
+  }
+
   // ── state ──────────────────────────────────────────────────────────────────
-  let files = $state<File[]>([]);
+  let items = $state<QueueItem[]>([]);
   let logs = $state<string[]>([]);
   let progress = $state(0);
   let progressLabel = $state("Idle");
@@ -44,17 +51,22 @@
   let outputFileCount = $state(0);
   let outputBytes = $state(0);
   let outputZip = $state<Blob | null>(null);
-  let outputDir = $state<string>("");
+  let outputDir = $state("");
   let showSettings = $state(false);
   let wasmMod = $state<WasmModule | null>(null);
   let wasmReady = $state(false);
   let wasmError = $state("");
 
   // ── derived ────────────────────────────────────────────────────────────────
-  let totalSize = $derived(files.reduce((s, f) => s + f.size, 0));
+  let totalSize = $derived(items.reduce((s, it) => s + it.size, 0));
   let canRun = $derived(
-    files.length > 0 && !running && (isTauri ? !!outputDir : wasmReady)
+    items.length > 0 && !running && (isTauri ? !!outputDir : wasmReady)
   );
+
+  // ── helpers ────────────────────────────────────────────────────────────────
+  function log(line: string) {
+    logs = [...logs, line];
+  }
 
   // ── init ───────────────────────────────────────────────────────────────────
   onMount(async () => {
@@ -65,41 +77,49 @@
       } else {
         showSettings = true;
       }
-    } else {
-      try {
-        wasmMod = await initWasm((line) => {
-          logs = [...logs, line];
-        });
-        wasmReady = true;
-        log("WASM runtime ready.");
-      } catch (err) {
-        wasmError = String(err instanceof Error ? err.message : err);
-        log(`Runtime error: ${wasmError}`);
-      }
+      return;
+    }
+    try {
+      wasmMod = await initWasm(log);
+      wasmReady = true;
+      log("WASM runtime ready.");
+    } catch (err) {
+      wasmError = err instanceof Error ? err.message : String(err);
+      log(`Runtime error: ${wasmError}`);
     }
   });
-
-  // ── helpers ────────────────────────────────────────────────────────────────
-  function log(line: string) {
-    logs = [...logs, line];
-  }
 
   function setProgress(pct: number, label: string) {
     progress = pct;
     progressLabel = label;
   }
 
-  function addFiles(newFiles: File[]) {
-    const names = new Set(files.map((f) => f.name));
-    const deduped = newFiles.filter((f) => !names.has(f.name));
-    files = [...files, ...deduped];
+  function appendItems(newItems: QueueItem[]) {
+    const names = new Set(items.map((it) => it.name));
+    const deduped = newItems.filter((it) => !names.has(it.name));
+    items = [...items, ...deduped];
     outputZip = null;
     outputFileCount = 0;
     outputBytes = 0;
   }
 
-  function removeFile(i: number) {
-    files = files.filter((_, idx) => idx !== i);
+  function addFiles(files: File[]) {
+    appendItems(files.map((f) => ({ name: f.name, size: f.size, file: f })));
+  }
+
+  async function addPaths(paths: string[]) {
+    try {
+      const stats = await statInputFiles(paths);
+      appendItems(
+        stats.map((s) => ({ name: s.name, size: s.size, path: s.path }))
+      );
+    } catch (err) {
+      log(`Error reading file metadata: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  function removeItem(i: number) {
+    items = items.filter((_, idx) => idx !== i);
   }
 
   // ── run parser ─────────────────────────────────────────────────────────────
@@ -127,26 +147,18 @@
   }
 
   async function runTauri() {
-    log("Writing input files to temp directory…");
     setProgress(10, "Preparing files");
+    const paths = items.map((it) => it.path).filter((p): p is string => !!p);
+    log(`Linking ${paths.length} input file(s) into temp dir…`);
 
-    const inputDir = await createTempInputDir();
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      const data = new Uint8Array(await file.arrayBuffer());
-      await writeTempInputFile(inputDir, file.name, data);
-      setProgress(
-        10 + ((i + 1) / Math.max(1, files.length)) * 15,
-        `Preparing ${i + 1} / ${files.length}`
-      );
-    }
+    const inputDir = await prepareInputDirFromPaths(paths);
     setProgress(25, "Running parser");
     log(`Input temp dir: ${inputDir}`);
     log(`Output dir: ${outputDir}`);
 
     const stdout = await runParserNative(inputDir, outputDir);
-    if (stdout) {
-      for (const line of stdout.split("\n").filter(Boolean)) log(line);
+    for (const line of stdout.split("\n")) {
+      if (line) log(line);
     }
 
     setProgress(100, "Done");
@@ -155,6 +167,7 @@
 
   async function runWasmMode() {
     if (!wasmMod) throw new Error("WASM runtime not ready");
+    const files = items.map((it) => it.file).filter((f): f is File => !!f);
     const estimatedBatches = Math.max(
       1,
       Math.ceil(totalSize / WASM_BATCH_BYTES)
@@ -215,7 +228,7 @@
   }
 
   function clear() {
-    files = [];
+    items = [];
     logs = [];
     outputFileCount = 0;
     outputBytes = 0;
@@ -238,7 +251,7 @@
   <!-- Header -->
   <header class="header">
     <div class="brand">
-      <svg class="brand-icon" viewBox="0 0 28 28" fill="none">
+      <svg class="brand-icon" viewBox="0 0 28 28" fill="none" aria-hidden="true">
         <rect width="28" height="28" rx="7" fill="var(--accent)" />
         <path d="M7 20L14 8l7 12H7z" fill="#000" />
       </svg>
@@ -249,23 +262,21 @@
         <span class="dir-badge" title={outputDir || "No output folder set"}>
           {outputDir ? outputDir.split(/[\\/]/).pop() : "No folder"}
         </span>
-      {:else}
-        <span class="runtime-badge" class:ready={wasmReady} class:error={!!wasmError}>
-          {wasmReady ? "WASM Ready" : wasmError ? "Runtime Error" : "Loading…"}
-        </span>
-      {/if}
-      {#if isTauri}
         <button
           class="icon-btn"
           onclick={() => (showSettings = true)}
           title="Settings"
           aria-label="Open settings"
         >
-          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16" aria-hidden="true">
             <path fill-rule="evenodd" clip-rule="evenodd"
               d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z" />
           </svg>
         </button>
+      {:else}
+        <span class="runtime-badge" class:ready={wasmReady} class:error={!!wasmError}>
+          {wasmReady ? "WASM Ready" : wasmError ? "Runtime Error" : "Loading…"}
+        </span>
       {/if}
     </div>
   </header>
@@ -277,15 +288,15 @@
       <div class="panel-head">
         <h2 class="panel-title">Input Files</h2>
         <span class="panel-meta">
-          {files.length} file{files.length !== 1 ? "s" : ""}
-          {files.length > 0 ? `· ${formatSize(totalSize)}` : ""}
+          {items.length} file{items.length !== 1 ? "s" : ""}
+          {items.length > 0 ? `· ${formatSize(totalSize)}` : ""}
         </span>
       </div>
 
-      <DropZone onFiles={addFiles} disabled={running} />
+      <DropZone onFiles={addFiles} onPaths={addPaths} disabled={running} />
 
       <div class="queue-wrap">
-        <FileQueue {files} onRemove={running ? undefined : removeFile} />
+        <FileQueue {items} onRemove={running ? undefined : removeItem} />
       </div>
 
       <!-- Actions -->
@@ -310,7 +321,7 @@
           </button>
         {/if}
 
-        {#if files.length > 0 || logs.length > 0}
+        {#if items.length > 0 || logs.length > 0}
           <button class="btn btn-ghost" onclick={clear} disabled={running}>
             Clear
           </button>
@@ -333,7 +344,7 @@
 
       {#if isTauri && outputDir}
         <div class="output-dir-note">
-          <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12">
+          <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true">
             <path d="M1 3.5A1.5 1.5 0 012.5 2h2.764c.958 0 1.76.56 2.311 1.184C7.985 3.648 8.48 4 9 4h4.5A1.5 1.5 0 0115 5.5v7a1.5 1.5 0 01-1.5 1.5h-11A1.5 1.5 0 011 12.5v-9z" />
           </svg>
           <code>{outputDir}</code>
@@ -343,7 +354,7 @@
   </main>
 
   <footer class="footer">
-    <span>YSMParser · <a href="https://github.com/OpenYSM/YSMParser" target="_blank" rel="noopener">GitHub</a></span>
+    <span>YSMParser · <a href="https://github.com/OpenYSM/YSMParser" target="_blank" rel="noopener noreferrer">GitHub</a></span>
   </footer>
 </div>
 
@@ -351,7 +362,6 @@
   .shell {
     display: flex;
     flex-direction: column;
-    height: 100%;
     min-height: 100dvh;
   }
 
@@ -360,10 +370,12 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 0.5rem;
     padding: 0.75rem 1.5rem;
     border-bottom: 1px solid var(--border);
     background: var(--surface-1);
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
   .brand {
     display: flex;
@@ -444,6 +456,7 @@
   @media (max-width: 768px) {
     .main {
       grid-template-columns: 1fr;
+      padding: 1rem;
     }
   }
 
@@ -456,6 +469,7 @@
     border: 1px solid var(--border);
     border-radius: 12px;
     padding: 1.1rem 1.25rem;
+    min-width: 0;
     min-height: 0;
   }
   .panel-head {
@@ -540,27 +554,23 @@
     background: var(--surface-2);
     border-radius: 6px;
     border: 1px solid var(--border);
-    overflow: hidden;
+    min-width: 0;
   }
   .output-dir-note code {
+    flex: 1;
+    min-width: 0;
     font-family: var(--font-mono);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    min-width: 0;
   }
 
   /* ── Footer ── */
   .footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
     padding: 0.6rem 1.5rem;
     border-top: 1px solid var(--border);
     font-size: 0.72rem;
     color: var(--text-muted);
     flex-shrink: 0;
-    flex-wrap: wrap;
-    gap: 0.5rem;
   }
 </style>

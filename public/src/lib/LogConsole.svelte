@@ -32,7 +32,14 @@
   });
 </script>
 
-<div class="console" bind:this={el}>
+<div
+  class="console"
+  bind:this={el}
+  role="log"
+  aria-live="polite"
+  aria-relevant="additions"
+  aria-label="Activity log"
+>
   {#if lines.length === 0}
     <span class="console-placeholder">Logs will appear here…</span>
   {:else}

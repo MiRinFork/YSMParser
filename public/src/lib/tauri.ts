@@ -28,14 +28,20 @@ export const isTauri =
     "__TAURI__" in tauriGlobal ||
     "__TAURI_INTERNALS__" in tauriGlobal);
 
-let _invoke: typeof import("@tauri-apps/api/core").invoke | null = null;
+let cachedInvoke: typeof import("@tauri-apps/api/core").invoke | null = null;
 
 async function invoke<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
-  if (!_invoke) {
+  if (!cachedInvoke) {
     const mod = await import("@tauri-apps/api/core");
-    _invoke = mod.invoke;
+    cachedInvoke = mod.invoke;
   }
-  return _invoke(cmd, args) as Promise<T>;
+  return cachedInvoke(cmd, args) as Promise<T>;
+}
+
+export interface FileStat {
+  name: string;
+  path: string;
+  size: number;
 }
 
 export async function runParserNative(
@@ -61,24 +67,26 @@ export async function openPathInFileBrowser(path: string): Promise<void> {
   return invoke("open_in_file_browser", { path });
 }
 
-export async function createTempInputDir(): Promise<string> {
-  return invoke<string>("create_temp_input_dir");
+export async function statInputFiles(paths: string[]): Promise<FileStat[]> {
+  return invoke<FileStat[]>("stat_input_files", { paths });
 }
 
-export async function writeTempInputFile(
-  inputDir: string,
-  name: string,
-  data: Uint8Array
-): Promise<void> {
-  return invoke("write_temp_input_file", {
-    inputDir,
-    name,
-    data: Array.from(data),
+export async function prepareInputDirFromPaths(paths: string[]): Promise<string> {
+  return invoke<string>("prepare_input_dir_from_paths", { paths });
+}
+
+export async function openInputFilesDialog(): Promise<string[]> {
+  return invoke<string[]>("open_input_files_dialog");
+}
+
+export type DragDropPhase = "enter" | "over" | "leave" | "drop";
+
+export async function listenTauriDragDrop(
+  onChange: (phase: DragDropPhase, paths: string[]) => void
+): Promise<() => void> {
+  const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+  return getCurrentWebview().onDragDropEvent(({ payload }) => {
+    const paths = "paths" in payload ? payload.paths : [];
+    onChange(payload.type, paths);
   });
-}
-
-export async function writeTempInputFiles(
-  files: { name: string; data: Uint8Array }[]
-): Promise<string> {
-  return invoke<string>("write_temp_inputs", { files: files.map(f => ({ name: f.name, data: Array.from(f.data) })) });
 }
