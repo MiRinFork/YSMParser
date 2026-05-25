@@ -50,6 +50,27 @@ export interface RunWasmResult {
   outputCount: number;
   outputBytes: number;
   batchCount: number;
+  timings: RunWasmTimings;
+}
+
+export interface RunWasmBatchTiming {
+  batch: number;
+  fileCount: number;
+  inputBytes: number;
+  inputWriteMs: number;
+  parserMs: number;
+  outputCollectMs: number;
+  cleanupMs: number;
+  totalMs: number;
+}
+
+export interface RunWasmTimings {
+  inputWriteMs: number;
+  parserMs: number;
+  outputCollectMs: number;
+  cleanupMs: number;
+  totalMs: number;
+  batches: RunWasmBatchTiming[];
 }
 
 const DEFAULT_MAX_BATCH_BYTES = 96 * 1024 * 1024;
@@ -176,22 +197,34 @@ export async function runWasm(
   );
   let outputCount = 0;
   let outputBytes = 0;
+  const timings: RunWasmTimings = {
+    inputWriteMs: 0,
+    parserMs: 0,
+    outputCollectMs: 0,
+    cleanupMs: 0,
+    totalMs: 0,
+    batches: [],
+  };
 
   if (batches.length === 0) {
-    return { outputCount: 0, outputBytes: 0, batchCount: 0 };
+    return { outputCount: 0, outputBytes: 0, batchCount: 0, timings };
   }
 
+  const totalStart = performance.now();
   for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
     const batch = batches[batchIndex];
     const batchNumber = batchIndex + 1;
     const batchBase = (batchIndex / batches.length) * 75;
     const batchSpan = 75 / batches.length;
+    const batchInputBytes = batch.reduce((sum, file) => sum + file.size, 0);
+    const batchStart = performance.now();
 
     wipeDir(FS, "/input");
     wipeDir(FS, "/output");
     ensureDir(FS, "/input");
     ensureDir(FS, "/output");
 
+    const inputStart = performance.now();
     for (let i = 0; i < batch.length; i++) {
       const file = batch[i];
       const bytes = new Uint8Array(await file.arrayBuffer());
@@ -201,12 +234,17 @@ export async function runWasm(
         `Loading batch ${batchNumber} / ${batches.length}`
       );
     }
+    const inputWriteMs = performance.now() - inputStart;
+    timings.inputWriteMs += inputWriteMs;
 
     options.onProgress(
       batchBase + batchSpan * 0.35,
       `Parsing batch ${batchNumber} / ${batches.length}`
     );
-    const exitCode = mod.callMain(["-i", "/input", "-o", "/output"]);
+    const parserStart = performance.now();
+    const exitCode = mod.callMain(["-i", "/input", "-o", "/output", "--profile"]);
+    const parserMs = performance.now() - parserStart;
+    timings.parserMs += parserMs;
     if (typeof exitCode === "number" && exitCode !== 0) {
       throw new Error(`Parser exited with code ${exitCode}`);
     }
@@ -215,19 +253,36 @@ export async function runWasm(
       batchBase + batchSpan * 0.9,
       `Collecting batch ${batchNumber} / ${batches.length}`
     );
+    const outputStart = performance.now();
     const batchOutput = collectOutputFiles(FS, "/output", options.onOutputFile);
+    const outputCollectMs = performance.now() - outputStart;
+    timings.outputCollectMs += outputCollectMs;
     outputCount += batchOutput.count;
     outputBytes += batchOutput.bytes;
 
+    const cleanupStart = performance.now();
     wipeDir(FS, "/input");
     wipeDir(FS, "/output");
+    const cleanupMs = performance.now() - cleanupStart;
+    timings.cleanupMs += cleanupMs;
+    timings.batches.push({
+      batch: batchNumber,
+      fileCount: batch.length,
+      inputBytes: batchInputBytes,
+      inputWriteMs,
+      parserMs,
+      outputCollectMs,
+      cleanupMs,
+      totalMs: performance.now() - batchStart,
+    });
     options.onProgress(
       batchBase + batchSpan,
       `Finished batch ${batchNumber} / ${batches.length}`
     );
   }
 
-  return { outputCount, outputBytes, batchCount: batches.length };
+  timings.totalMs = performance.now() - totalStart;
+  return { outputCount, outputBytes, batchCount: batches.length, timings };
 }
 
 function makeFileBatches(files: File[], maxBatchBytes: number): File[][] {

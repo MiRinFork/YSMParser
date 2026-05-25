@@ -94,6 +94,10 @@
     progressLabel = label;
   }
 
+  function formatMs(ms: number) {
+    return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms.toFixed(0)}ms`;
+  }
+
   function appendItems(newItems: QueueItem[]) {
     const names = new Set(items.map((it) => it.name));
     const deduped = newItems.filter((it) => !names.has(it.name));
@@ -190,7 +194,16 @@
     log(
       `Parser finished. ${result.outputCount} output file(s) from ${result.batchCount} batch(es).`
     );
+    log(
+      `Timing: input ${formatMs(result.timings.inputWriteMs)}, parser ${formatMs(result.timings.parserMs)}, collect ${formatMs(result.timings.outputCollectMs)}, cleanup ${formatMs(result.timings.cleanupMs)}.`
+    );
+    for (const batch of result.timings.batches) {
+      log(
+        `Batch ${batch.batch}: ${batch.fileCount} file(s), ${formatSize(batch.inputBytes)}, parser ${formatMs(batch.parserMs)}, total ${formatMs(batch.totalMs)}.`
+      );
+    }
 
+    const packageStart = performance.now();
     outputZip = await zip.generateAsync(
       {
         type: "blob",
@@ -205,6 +218,7 @@
         );
       }
     );
+    const packageMs = performance.now() - packageStart;
 
     outputFileCount = result.outputCount;
     outputBytes = result.outputBytes;
@@ -212,6 +226,7 @@
     log(
       `ZIP ready — ${result.outputCount} file(s), ${formatSize(result.outputBytes)} unpacked.`
     );
+    log(`Timing: packaging ${formatMs(packageMs)}.`);
   }
 
   // ── download ───────────────────────────────────────────────────────────────

@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "build:web": "scripts/build-web.sh",
+    "bench:wasm-node": "node scripts/bench-wasm-node.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

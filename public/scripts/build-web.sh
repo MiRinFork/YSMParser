@@ -14,7 +14,9 @@ cmake --build --preset wasm-web-release
 
 cd "$public_dir"
 
-pnpm install --frozen-lockfile
+if [ ! -x "$public_dir/node_modules/.bin/vite" ]; then
+  pnpm install --frozen-lockfile
+fi
 "$public_dir/node_modules/.bin/vite" build
 
 install -Dm644 "$wasm_build_dir/YSMParser.js" "$dist_dir/YSMParser.js"
